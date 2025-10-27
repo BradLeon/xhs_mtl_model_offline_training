@@ -1,0 +1,146 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>CLIP Feature Evaluation Report</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 40px; }
+                h1 { color: #333; }
+                h2 { color: #666; margin-top: 30px; }
+                .metric { margin: 10px 0; padding: 10px; background: #f5f5f5; }
+                .good { background: #d4edda; }
+                .warning { background: #fff3cd; }
+                .bad { background: #f8d7da; }
+                table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background: #f2f2f2; }
+                .recommendation { margin-top: 30px; padding: 20px; background: #e7f3ff; }
+            </style>
+        </head>
+        <body>
+            <h1>CLIP Feature Evaluation Report</h1>
+            <p>Generated: 2025-10-13 16:05:03</p>
+            <p>Total Samples: 50,000</p>
+            
+            <h2>1. Visual Understanding Layer 视觉理解层</h2>
+        
+                <div class="metric good">
+                    <strong>Clustering Quality:</strong><br>
+                    Best K: 50<br>
+                    Silhouette Score: 0.5970<br>
+                <strong>Category Purity:</strong><br>  taxonomy1: 0.4120<br>  taxonomy2: 0.2862<br>  intention_lv1: 0.4719<br></div>
+                <div class="metric bad">
+                    <strong>Semantic Consistency:</strong><br>
+                    Same Note Similarity: 0.2221 ± 0.0291<br>
+                    Random Pair Similarity: 0.2177 ± 0.0253<br>
+                    Effect Size (Cohen's d): 0.1638<br>
+                    P-value: 0.000001
+                </div>
+                <h2>2. Feature Quality Layer 表征质量层</h2>
+                        <div class="metric good">
+                            <strong>Image Feature Variance:</strong><br>
+                            Zero Variance Dims: 0/512 (0.0%)<br>
+                            High Variance Dims: 0/512 (0.0%)<br>
+                            Mean Variance: 0.000650
+                        </div>
+                        
+                        <div class="metric good">
+                            <strong>Text Feature Variance:</strong><br>
+                            Zero Variance Dims: 0/512 (0.0%)<br>
+                            High Variance Dims: 0/512 (0.0%)<br>
+                            Mean Variance: 0.000207
+                        </div>
+                        
+                        <div class="metric warning">
+                            <strong>Image PCA Analysis:</strong><br>
+                            Dims for 95% variance: 297/512 (reduction: 42.0%)<br>
+                            Dims for 99% variance: 434/512
+                        </div>
+                        
+                        <div class="metric warning">
+                            <strong>Text PCA Analysis:</strong><br>
+                            Dims for 95% variance: 302/512 (reduction: 41.0%)<br>
+                            Dims for 99% variance: 432/512
+                        </div>
+                        <h2>3. Task Adaptation Layer 任务适配层</h2>
+                <div class="metric warning">
+                    <strong>CTR Prediction Performance:</strong><br>
+                    Logistic Regression AUC: 0.6250<br>
+                    Random Forest R²: 0.0257<br>
+                    Spearman Correlation: 0.1656
+                </div>
+                <h3>Ablation Study Results 消融实验</h3>
+                        <div class="metric bad">
+                            <strong>Image Features Contribution:</strong><br>
+                            ΔR²: -0.0015<br>
+                            Relative contribution: -1.9%<br>
+                            Status: negligible
+                        </div>
+                        
+                        <div class="metric bad">
+                            <strong>Text Features Contribution:</strong><br>
+                            ΔR²: -0.0065<br>
+                            Relative contribution: -8.3%<br>
+                            Status: negligible
+                        </div>
+                        
+                    <table>
+                        <tr><th>Feature Set</th><th>R²</th><th>MSE</th><th>Spearman</th></tr>
+                    
+                        <tr>
+                            <td>baseline_all</td>
+                            <td>0.0793</td>
+                            <td>0.003856</td>
+                            <td>0.2919</td>
+                        </tr>
+                        
+                        <tr>
+                            <td>no_clip</td>
+                            <td>0.0932</td>
+                            <td>0.003798</td>
+                            <td>0.3036</td>
+                        </tr>
+                        
+                        <tr>
+                            <td>no_image</td>
+                            <td>0.0808</td>
+                            <td>0.003850</td>
+                            <td>0.2943</td>
+                        </tr>
+                        
+                        <tr>
+                            <td>no_text</td>
+                            <td>0.0858</td>
+                            <td>0.003829</td>
+                            <td>0.2950</td>
+                        </tr>
+                        
+                        <tr>
+                            <td>only_clip</td>
+                            <td>0.0257</td>
+                            <td>0.004081</td>
+                            <td>0.1656</td>
+                        </tr>
+                        
+                        <tr>
+                            <td>only_image</td>
+                            <td>0.0239</td>
+                            <td>0.004088</td>
+                            <td>0.1293</td>
+                        </tr>
+                        
+                        <tr>
+                            <td>only_text</td>
+                            <td>0.0143</td>
+                            <td>0.004128</td>
+                            <td>0.1401</td>
+                        </tr>
+                        </table>
+                    <div class="recommendation">
+                        <strong>Ablation Study Recommendation:</strong><br>
+                        ❌ REMOVE image_features: Negative impact on CTR prediction | ❌ REMOVE text_features: Negative impact on CTR prediction
+                    </div>
+                    <div class="recommendation"><h3>Recommendations 优化建议</h3><ul><li>✅ Image features can be reduced to 297 dimensions (from 512) while preserving 95% variance.</li><li>✅ Text features can be reduced to 302 dimensions (from 512) while preserving 95% variance.</li><li>⚠️ Weak image-text alignment (Cohen's d < 0.5). Consider fine-tuning CLIP on domain-specific data.</li></ul></div>
+        </body>
+        </html>
+        
