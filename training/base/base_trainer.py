@@ -435,7 +435,8 @@ class BaseMTLTrainer(ABC):
             training_config=self.config.get_training_config_dict(),
             input_path=self.config.input_path,
             model=self.model,
-            preprocessors=self.feature_processor.get_preprocessors()
+            preprocessors=self.feature_processor.get_preprocessors(),
+            feature_columns=feature_columns  # 传递特征列定义
         )
         
         # 总时间

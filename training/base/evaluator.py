@@ -219,8 +219,9 @@ class BaseMTLEvaluator:
                     training_config: Dict[str, Any],
                     input_path: str,
                     model = None,
-                    preprocessors: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """保存训练结果
+                    preprocessors: Optional[Dict[str, Any]] = None,
+                    feature_columns: Optional[List] = None) -> Dict[str, Any]:
+        """保存训练结果（增强版：包含完整checkpoint）
         
         Args:
             model_type: 模型类型
@@ -231,44 +232,168 @@ class BaseMTLEvaluator:
             input_path: 输入路径
             model: 模型实例（可选）
             preprocessors: 预处理器（可选）
+            feature_columns: DeepCTR特征列定义（可选）
             
         Returns:
-            完整的结果字典
+            完整的结果字典，包含checkpoint路径
         """
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        # 创建checkpoint目录
+        checkpoint_dir = self.output_path / f"checkpoint_{model_type.lower()}_{timestamp}"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Creating checkpoint directory: {checkpoint_dir}")
         
         # 构建结果字典
         results = {
             'model_type': model_type,
             'timestamp': timestamp,
             'tasks': self.task_names,
+            'task_column_mapping': self.task_column_mapping,
             'model_config': model_config,
             'training_config': training_config,
             'feature_info': feature_info,
             'training_info': training_info,
-            'input_path': input_path
+            'input_path': input_path,
+            'checkpoint_dir': str(checkpoint_dir)
         }
         
-        # 保存结果JSON
-        results_file = self.output_path / f"{model_type.lower()}_results_{timestamp}.json"
-        with open(results_file, 'w') as f:
+        # 1. 保存训练信息JSON
+        training_info_file = checkpoint_dir / "training_info.json"
+        with open(training_info_file, 'w') as f:
             json.dump(results, f, indent=2)
-        logger.info(f"Results saved to {results_file}")
+        logger.info(f"✅ Training info saved to {training_info_file}")
         
-        # 保存模型
+        # 2. 保存模型权重
         if model is not None:
-            model_file = self.output_path / f"{model_type.lower()}_model_{timestamp}.pth"
+            model_file = checkpoint_dir / "model.pth"
             torch.save(model.state_dict(), model_file)
-            logger.info(f"Model saved to {model_file}")
+            logger.info(f"✅ Model weights saved to {model_file}")
+            
+            # 尝试保存完整模型（用于快速加载）
+            # 注意：如果模型包含不可序列化的组件（如自定义损失函数），此操作可能失败
+            complete_model_file = checkpoint_dir / "complete_model.pth"
+            try:
+                torch.save(model, complete_model_file)
+                logger.info(f"✅ Complete model saved to {complete_model_file}")
+            except (AttributeError, pickle.PicklingError) as e:
+                logger.warning(f"⚠️  Could not save complete model due to unpicklable components: {e}")
+                logger.info("   This is expected for models with custom loss functions.")
+                logger.info("   The model can still be loaded using the 'rebuild' method.")
+                # 删除可能创建的损坏文件
+                if complete_model_file.exists():
+                    complete_model_file.unlink()
         
-        # 保存预处理器
+        # 3. 保存模型配置（独立文件，便于重建模型）
+        model_config_file = checkpoint_dir / "model_config.json"
+        enhanced_model_config = {
+            **model_config,
+            'model_class': model.__class__.__name__ if model else None,
+            'device': str(model.device) if model and hasattr(model, 'device') else 'cpu',
+            'tasks': self.task_names,
+            'task_column_mapping': self.task_column_mapping
+        }
+        with open(model_config_file, 'w') as f:
+            json.dump(enhanced_model_config, f, indent=2)
+        logger.info(f"✅ Model config saved to {model_config_file}")
+        
+        # 4. 保存特征列定义（关键：用于模型重建）
+        if feature_columns:
+            feature_columns_file = checkpoint_dir / "feature_columns.json"
+            feature_columns_dict = self._serialize_feature_columns(feature_columns)
+            with open(feature_columns_file, 'w') as f:
+                json.dump(feature_columns_dict, f, indent=2)
+            logger.info(f"✅ Feature columns saved to {feature_columns_file}")
+        elif 'feature_columns' in feature_info:
+            # 尝试从feature_info中获取
+            feature_columns_file = checkpoint_dir / "feature_columns.json"
+            feature_columns_dict = self._serialize_feature_columns(feature_info['feature_columns'])
+            with open(feature_columns_file, 'w') as f:
+                json.dump(feature_columns_dict, f, indent=2)
+            logger.info(f"✅ Feature columns saved from feature_info")
+        
+        # 5. 保存预处理器
         if preprocessors is not None:
-            preprocessor_file = self.output_path / f"{model_type.lower()}_preprocessors_{timestamp}.pkl"
+            preprocessor_file = checkpoint_dir / "preprocessors.pkl"
             with open(preprocessor_file, 'wb') as f:
                 pickle.dump(preprocessors, f)
-            logger.info(f"Preprocessors saved to {preprocessor_file}")
+            logger.info(f"✅ Preprocessors saved to {preprocessor_file}")
+        
+        # 6. 保存标签归一化器（如果存在）
+        if self.label_normalizer is not None:
+            normalizer_file = checkpoint_dir / "label_normalizer.pkl"
+            with open(normalizer_file, 'wb') as f:
+                pickle.dump(self.label_normalizer, f)
+            logger.info(f"✅ Label normalizer saved to {normalizer_file}")
+        
+        # 7. 创建checkpoint元数据文件（便于版本控制）
+        metadata = {
+            'version': '1.0',
+            'created_at': timestamp,
+            'model_type': model_type,
+            'tasks': self.task_names,
+            'files': {
+                'model_weights': 'model.pth',
+                'complete_model': 'complete_model.pth',
+                'model_config': 'model_config.json',
+                'feature_columns': 'feature_columns.json',
+                'preprocessors': 'preprocessors.pkl',
+                'label_normalizer': 'label_normalizer.pkl' if self.label_normalizer else None,
+                'training_info': 'training_info.json'
+            },
+            'requirements': {
+                'deepctr_torch': '0.2.9',  # 根据实际版本调整
+                'torch': torch.__version__
+            }
+        }
+        metadata_file = checkpoint_dir / "checkpoint_metadata.json"
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        logger.info(f"✅ Checkpoint metadata saved to {metadata_file}")
+        
+        # 打印checkpoint摘要
+        logger.info("="*60)
+        logger.info(f"📦 CHECKPOINT SAVED SUCCESSFULLY")
+        logger.info(f"📁 Directory: {checkpoint_dir}")
+        logger.info(f"📊 Model type: {model_type}")
+        logger.info(f"🎯 Tasks: {', '.join(self.task_names)}")
+        logger.info("="*60)
+        
+        # 更新results字典
+        results['checkpoint_files'] = metadata['files']
         
         return results
+    
+    def _serialize_feature_columns(self, feature_columns: List) -> List[Dict]:
+        """将DeepCTR特征列对象序列化为字典
+        
+        Args:
+            feature_columns: DeepCTR特征列列表
+            
+        Returns:
+            可序列化的字典列表
+        """
+        serialized = []
+        for col in feature_columns:
+            if hasattr(col, 'name'):
+                col_dict = {
+                    'name': col.name,
+                    'type': col.__class__.__name__  # SparseFeat or DenseFeat
+                }
+                
+                # SparseFeat特有属性
+                if hasattr(col, 'vocabulary_size'):
+                    col_dict['vocabulary_size'] = col.vocabulary_size
+                    col_dict['embedding_dim'] = col.embedding_dim
+                    col_dict['dtype'] = str(col.dtype)
+                
+                # DenseFeat特有属性
+                if hasattr(col, 'dimension'):
+                    col_dict['dimension'] = col.dimension
+                    
+                serialized.append(col_dict)
+        
+        return serialized
     
     def print_summary(self, evaluation_results: Dict[str, Dict[str, float]]) -> None:
         """打印评估结果摘要

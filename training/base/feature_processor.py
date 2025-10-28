@@ -339,15 +339,20 @@ class BaseMTLFeatureProcessor:
         return task_targets
     
     def get_preprocessors(self) -> Dict[str, Any]:
-        """获取所有预处理器
+        """获取所有预处理器（增强版）
         
         Returns:
-            预处理器字典
+            预处理器字典，包含完整的特征处理信息
         """
         return {
             'label_encoders': self.label_encoders,
             'scalers': self.scalers,
-            'pca_transformers': self.pca_transformers
+            'pca_transformers': self.pca_transformers,
+            'feature_settings': {
+                'filter_zeros': self.filter_zeros,
+                'use_pca': self.use_pca,
+                'pca_components': self.pca_components
+            }
         }
     
     def validate_features(self, df: pd.DataFrame, feature_columns: List) -> Dict[str, Any]:
