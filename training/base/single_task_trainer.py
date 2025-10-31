@@ -173,6 +173,24 @@ class BaseSingleTaskTrainer(ABC):
             'dnn_dropout': 0.3
         }
     
+    def _get_training_config(self) -> Dict[str, Any]:
+        """获取训练配置"""
+        return {
+            'model_type': self.model_type,
+            'feature_config': self.feature_config,
+            'label_column': self.label_column,
+            'use_early_stopping': self.use_early_stopping,
+            'early_stopping_patience': self.early_stopping_patience,
+            'early_stopping_monitor': self.early_stopping_monitor,
+            'early_stopping_min_delta': self.early_stopping_min_delta,
+            'save_best_model': self.save_best_model,
+            'filter_zeros': getattr(self, 'filter_zeros', False),
+            'min_impression_threshold': getattr(self, 'min_impression_threshold', 5000),
+            'use_pca': getattr(self, 'use_pca', False),
+            'pca_components': getattr(self, 'pca_components', 256),
+            'use_fp16': getattr(self, 'use_fp16', False)
+        }
+    
     def compile_model(self, learning_rate: float = 0.001) -> None:
         """编译模型（统一逻辑）"""
         logger.info("🔧 Compiling model...")
@@ -402,7 +420,11 @@ class BaseSingleTaskTrainer(ABC):
                 results=evaluation_results,
                 model=self.model,
                 preprocessors=self.feature_processor.get_preprocessors(),
-                additional_info=additional_info
+                additional_info=additional_info,
+                feature_columns=feature_columns,  # 添加：传递特征列定义
+                model_config=self.get_model_config(),  # 添加：模型配置
+                training_config=self._get_training_config(),  # 添加：训练配置
+                input_path=str(self.input_path)  # 添加：输入路径
             )
             
             # 总时间

@@ -196,6 +196,72 @@ class ModelLoader:
         model_type = config.get('model_type', '').upper()
         tasks = config.get('tasks', [])
         
+        # 检查任务类型：单任务 vs 多任务
+        task_type = config.get('task_type', 'multi_task')  # 从配置读取任务类型
+        
+        if task_type == 'single_task':
+            # === 单任务模型 ===
+            model = self._create_single_task_model(model_type, config, feature_columns)
+        else:
+            # === 多任务模型 ===
+            model = self._create_multi_task_model(model_type, config, feature_columns, tasks)
+        
+        logger.info(f"Created {model_type} model with {len(tasks) if tasks else 1} tasks")
+        return model
+    
+    def _create_single_task_model(self, model_type: str, config: Dict[str, Any], feature_columns: List) -> nn.Module:
+        """创建单任务模型
+        
+        Args:
+            model_type: 模型类型
+            config: 模型配置
+            feature_columns: 特征列定义
+            
+        Returns:
+            创建的单任务模型
+        """
+        # 导入DeepCTR模型
+        from deepctr_torch.models import DeepFM, PNN, WDL, DCN, xDeepFM, FiBiNET, AutoInt, CCPM
+        
+        # 获取设备
+        device = torch.device(self.device)
+        
+        # 根据模型类型创建模型
+        if model_type in ['DEEPFM', 'DeepFM']:
+            model = DeepFM(feature_columns, feature_columns, task='regression', device=device)
+        elif model_type == 'PNN':
+            model = PNN(feature_columns, task='regression', device=device)
+        elif model_type == 'WDL':
+            model = WDL(feature_columns, feature_columns, task='regression', device=device)
+        elif model_type == 'DCN':
+            model = DCN(feature_columns, task='regression', device=device)
+        elif model_type in ['XDEEPFM', 'xDeepFM']:
+            model = xDeepFM(feature_columns, feature_columns, task='regression', device=device)
+        elif model_type in ['FIBINET', 'FiBiNET']:
+            model = FiBiNET(feature_columns, feature_columns, task='regression', device=device)
+        elif model_type in ['AUTOINT', 'AutoInt']:
+            model = AutoInt(feature_columns, task='regression', device=device)
+        elif model_type == 'CCPM':
+            model = CCPM(feature_columns, task='regression', device=device)
+        else:
+            logger.warning(f"Unknown single-task model type: {model_type}, falling back to DeepFM")
+            model = DeepFM(feature_columns, feature_columns, task='regression', device=device)
+        
+        logger.info(f"Created single-task {model_type} model")
+        return model
+    
+    def _create_multi_task_model(self, model_type: str, config: Dict[str, Any], feature_columns: List, tasks: List[str]) -> nn.Module:
+        """创建多任务模型
+        
+        Args:
+            model_type: 模型类型
+            config: 模型配置
+            feature_columns: 特征列定义
+            tasks: 任务列表
+            
+        Returns:
+            创建的多任务模型
+        """
         # 根据模型类型创建相应的模型
         if model_type == 'PNN_MMOE':
             # 尝试导入PNN_MMOE模型
@@ -271,9 +337,9 @@ class ModelLoader:
                 device=self.device
             )
         else:
-            raise ValueError(f"Unsupported model type: {model_type}")
+            raise ValueError(f"Unsupported multi-task model type: {model_type}")
         
-        logger.info(f"Created {model_type} model with {len(tasks)} tasks")
+        logger.info(f"Created multi-task {model_type} model with {len(tasks)} tasks")
         return model
     
     def load_preprocessors(self) -> Dict[str, Any]:

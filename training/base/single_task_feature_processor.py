@@ -375,17 +375,50 @@ class BaseSingleTaskFeatureProcessor:
         return model_input
     
     def get_preprocessors(self) -> Dict[str, Any]:
-        """获取所有预处理器
+        """获取所有预处理器（增强版：包含feature_settings）
         
         Returns:
-            预处理器字典
+            预处理器字典，包含feature_settings信息用于推理重建
         """
+        # 构建feature_settings信息
+        feature_settings = {
+            'use_pca': self.use_pca,
+            'pca_components': self.pca_components,
+            'use_fp16': self.use_fp16,
+            'unified_embedding_dim': self.unified_embedding_dim,
+            'feature_columns': self.feature_columns,
+            'feature_config': self.feature_config
+        }
+        
+        # 添加预处理器详细信息
+        feature_settings['preprocessor_info'] = {
+            'label_encoders': {
+                name: {
+                    'classes': encoder.classes_.tolist(),
+                    'n_classes': len(encoder.classes_)
+                } for name, encoder in self.label_encoders.items()
+            },
+            'scalers': {
+                name: {
+                    'mean': scaler.mean_.tolist() if hasattr(scaler, 'mean_') else None,
+                    'scale': scaler.scale_.tolist() if hasattr(scaler, 'scale_') else None
+                } for name, scaler in self.scalers.items()
+            },
+            'pca_transformers': {
+                name: {
+                    'n_components': pca.n_components_,
+                    'explained_variance_ratio': pca.explained_variance_ratio_.tolist()
+                } for name, pca in self.pca_transformers.items()
+            }
+        }
+        
         return {
             'label_encoders': self.label_encoders,
             'scalers': self.scalers,
             'pca_transformers': self.pca_transformers,
             'feature_config': self.feature_config,
-            'unified_embedding_dim': self.unified_embedding_dim
+            'unified_embedding_dim': self.unified_embedding_dim,
+            'feature_settings': feature_settings  # 添加：feature_settings信息
         }
     
     def validate_features(self, feature_dict: Dict[str, np.ndarray]) -> Dict[str, Any]:
