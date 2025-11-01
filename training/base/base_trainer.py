@@ -78,7 +78,11 @@ class BaseMTLTrainer(ABC):
             task_column_mapping=self.data_processor.available_tasks,
             output_path=config.output_path,
             use_label_normalization=(config.label_normalization.value != 'none'),
-            label_normalizer=None  # 将在训练时初始化
+            label_normalizer=None,  # 将在训练时初始化
+            # 可视化参数
+            enable_visualization=getattr(config, 'enable_visualization', True),
+            scatter_sample_size=getattr(config, 'scatter_sample_size', 1000),
+            plot_dpi=getattr(config, 'plot_dpi', 150)
         )
         
         self.model_factory = ModelFactory(config)
@@ -287,18 +291,31 @@ class BaseMTLTrainer(ABC):
             logger.error(f"Training failed: {e}")
             raise
         
-        # 评估模型
-        final_results = self.evaluator.evaluate_model(self.model, val_model_input, targets, val_idx)
-        
+        # 创建临时checkpoint目录用于可视化（将在save_results中正式创建）
+        from datetime import datetime
+        from pathlib import Path
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        temp_checkpoint_dir = Path(self.config.output_path) / f"checkpoint_{self.config.model_type.lower()}_{timestamp}"
+
+        # 评估模型（传递checkpoint_dir用于保存散点图）
+        final_results = self.evaluator.evaluate_model(
+            self.model, val_model_input, targets, val_idx,
+            checkpoint_dir=str(temp_checkpoint_dir)
+        )
+
+        # 保存checkpoint_dir供后续使用
+        self.checkpoint_dir = temp_checkpoint_dir
+
         training_info = {
             'epochs_completed': len(history.history.get('loss', [])) if hasattr(history, 'history') else epochs,
             'training_history': history.history if hasattr(history, 'history') else {},
             'early_stopped': self.config.use_early_stopping and len(history.history.get('loss', [])) < epochs if hasattr(history, 'history') else False,
             'evaluation_results': final_results,
             'train_samples': len(train_idx),
-            'val_samples': len(val_idx)
+            'val_samples': len(val_idx),
+            'checkpoint_dir': str(temp_checkpoint_dir)
         }
-        
+
         return training_info
     
     def _check_training_data_quality(self, train_targets: np.ndarray, val_targets: np.ndarray) -> None:

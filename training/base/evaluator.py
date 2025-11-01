@@ -19,8 +19,18 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 import numpy as np
 import torch
-from scipy.stats import spearmanr, kendalltau
+from scipy.stats import spearmanr, kendalltau, skew, kurtosis
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+# Import matplotlib for visualization
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend for server environments
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    logger.warning("matplotlib not available - scatter plots will be disabled")
 
 logger = logging.getLogger(__name__)
 
@@ -35,68 +45,101 @@ class BaseMTLEvaluator:
     - 结果保存和报告
     """
     
-    def __init__(self, 
+    def __init__(self,
                  task_names: List[str],
                  task_column_mapping: Dict[str, str],
                  output_path: str,
                  use_label_normalization: bool = False,
-                 label_normalizer = None):
+                 label_normalizer = None,
+                 enable_visualization: bool = True,
+                 scatter_sample_size: int = 1000,
+                 plot_dpi: int = 150):
         """初始化评估器
-        
+
         Args:
             task_names: 任务名称列表
             task_column_mapping: 任务名到列名的映射
             output_path: 结果输出路径
             use_label_normalization: 是否使用标签归一化
             label_normalizer: 标签归一化器
+            enable_visualization: 是否启用可视化（散点图）
+            scatter_sample_size: 散点图采样数量（默认1000）
+            plot_dpi: 图表DPI质量（默认150）
         """
         self.task_names = task_names
         self.task_column_mapping = task_column_mapping
         self.output_path = Path(output_path)
         self.use_label_normalization = use_label_normalization
         self.label_normalizer = label_normalizer
-        
+
+        # 可视化配置
+        self.enable_visualization = enable_visualization and MATPLOTLIB_AVAILABLE
+        self.scatter_sample_size = scatter_sample_size
+        self.plot_dpi = plot_dpi
+
         # 确保输出目录存在
         self.output_path.mkdir(parents=True, exist_ok=True)
-        
+
         logger.info(f"Initialized MTL evaluator for {len(task_names)} tasks")
         logger.info(f"Output path: {output_path}")
         logger.info(f"Label normalization: {'Enabled' if use_label_normalization else 'Disabled'}")
+        logger.info(f"Visualization: {'Enabled' if self.enable_visualization else 'Disabled'}")
+        if self.enable_visualization:
+            logger.info(f"  Scatter sample size: {scatter_sample_size}")
+            logger.info(f"  Plot DPI: {plot_dpi}")
     
-    def evaluate_model(self, 
+    def evaluate_model(self,
                       model,
-                      model_input: Dict[str, np.ndarray], 
-                      targets: Dict[str, np.ndarray], 
-                      val_indices: np.ndarray) -> Dict[str, Dict[str, float]]:
-        """评估MTL模型性能
-        
+                      model_input: Dict[str, np.ndarray],
+                      targets: Dict[str, np.ndarray],
+                      val_indices: np.ndarray,
+                      checkpoint_dir: Optional[str] = None) -> Dict[str, Dict[str, float]]:
+        """评估MTL模型性能（增强版：包含详细统计和可视化）
+
         Args:
             model: 训练好的模型
             model_input: 验证集输入
             targets: 目标变量字典
             val_indices: 验证集索引
-            
+            checkpoint_dir: checkpoint目录路径（用于保存可视化图表）
+
         Returns:
             每个任务的评估结果字典
         """
         logger.info("Evaluating MTL model performance...")
-        
+
         results = {}
-        
+
         try:
             # 获取模型预测
             predictions = model.predict(model_input, batch_size=256)
             logger.info(f"Predictions shape: {predictions.shape}")
-            
+
             # 反归一化预测值
             if self.use_label_normalization and self.label_normalizer is not None:
                 logger.info("Denormalizing predictions back to original scale...")
                 predictions = self.label_normalizer.inverse_transform(predictions, self.task_names)
                 logger.info("✅ Prediction denormalization completed")
-            
-            # 分析预测值分布
-            self._analyze_prediction_distribution(predictions)
-            
+
+            # 分析预测值分布（增强版：包含Target对比）
+            self._analyze_prediction_distribution(predictions, targets, val_indices)
+
+            # 创建验证集散点图（如果启用）
+            if self.enable_visualization and checkpoint_dir is not None:
+                try:
+                    self._create_validation_scatter_plots(
+                        predictions=predictions,
+                        targets=targets,
+                        val_indices=val_indices,
+                        checkpoint_dir=checkpoint_dir,
+                        sample_size=self.scatter_sample_size
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create scatter plots: {e}")
+                    logger.warning("Continuing without visualization...")
+                    import traceback
+                    logger.debug(traceback.format_exc())
+
             # 计算每个任务的评估指标
             for i, task_name in enumerate(self.task_names):
                 column_name = self.task_column_mapping.get(task_name, task_name)
@@ -110,9 +153,11 @@ class BaseMTLEvaluator:
                 else:
                     logger.warning(f"Task {task_name} not found in targets")
                     results[task_name] = {'error': f'Target column {column_name} not found'}
-                    
+
         except Exception as e:
             logger.error(f"Evaluation failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             # 返回错误结果
             for task_name in self.task_names:
                 results[task_name] = {
@@ -120,37 +165,237 @@ class BaseMTLEvaluator:
                     'valid_samples': 0,
                     'error': str(e)
                 }
-        
+
         return results
     
-    def _analyze_prediction_distribution(self, predictions: np.ndarray) -> None:
-        """分析预测值分布
-        
+    def _analyze_prediction_distribution(self,
+                                        predictions: np.ndarray,
+                                        targets: Dict[str, np.ndarray] = None,
+                                        val_indices: np.ndarray = None) -> None:
+        """分析预测值分布（增强版：包含偏度、峰度和Target对比）
+
         Args:
             predictions: 模型预测值
+            targets: 目标变量字典（可选）
+            val_indices: 验证集索引（可选）
         """
-        logger.info("="*60)
-        logger.info("PREDICTION DISTRIBUTION ANALYSIS")
-        logger.info("="*60)
-        
+        logger.info("="*65)
+        logger.info("DETAILED PREDICTION & TARGET DISTRIBUTION ANALYSIS")
+        logger.info("="*65)
+
         for i, task_name in enumerate(self.task_names):
             task_predictions = predictions[:, i] if predictions.ndim > 1 else predictions
-            
-            logger.info(f"{task_name} predictions:")
-            logger.info(f"  Mean: {task_predictions.mean():.6f}")
-            logger.info(f"  Std: {task_predictions.std():.6f}")
-            logger.info(f"  Min: {task_predictions.min():.6f}")
-            logger.info(f"  Max: {task_predictions.max():.6f}")
+
+            # 获取对应的target值
+            column_name = self.task_column_mapping.get(task_name, task_name)
+            task_targets = None
+            if targets is not None and column_name in targets and val_indices is not None:
+                task_targets = targets[column_name][val_indices]
+
+            logger.info(f"\nTASK: {task_name}")
+            logger.info("-" * 65)
+
+            # === Predictions 统计 ===
+            pred_mean = task_predictions.mean()
+            pred_std = task_predictions.std()
+            pred_min = task_predictions.min()
+            pred_max = task_predictions.max()
+            pred_skew = skew(task_predictions)
+            pred_kurt = kurtosis(task_predictions)
+
+            logger.info("Predictions Statistics:")
+            logger.info(f"  Mean: {pred_mean:.6f} | Std: {pred_std:.6f} | Min: {pred_min:.6f} | Max: {pred_max:.6f}")
+
+            # 解释偏度
+            skew_desc = "symmetric"
+            if pred_skew > 0.5:
+                skew_desc = "right-skewed (tail to right)"
+            elif pred_skew < -0.5:
+                skew_desc = "left-skewed (tail to left)"
+
+            # 解释峰度
+            kurt_desc = "mesokurtic (normal-like)"
+            if pred_kurt > 1:
+                kurt_desc = "leptokurtic (heavy tails)"
+            elif pred_kurt < -1:
+                kurt_desc = "platykurtic (light tails)"
+
+            logger.info(f"  Skewness: {pred_skew:.4f} ({skew_desc})")
+            logger.info(f"  Kurtosis: {pred_kurt:.4f} ({kurt_desc})")
             logger.info(f"  Unique values: {np.unique(task_predictions).shape[0]}")
-            
-            # 检查预测值质量
-            if task_predictions.std() < 1e-8:
+
+            # === Targets 统计（如果可用）===
+            if task_targets is not None:
+                target_mean = task_targets.mean()
+                target_std = task_targets.std()
+                target_min = task_targets.min()
+                target_max = task_targets.max()
+                target_skew = skew(task_targets)
+                target_kurt = kurtosis(task_targets)
+
+                logger.info("\nTargets Statistics:")
+                logger.info(f"  Mean: {target_mean:.6f} | Std: {target_std:.6f} | Min: {target_min:.6f} | Max: {target_max:.6f}")
+
+                # 解释偏度
+                target_skew_desc = "symmetric"
+                if target_skew > 0.5:
+                    target_skew_desc = "right-skewed (tail to right)"
+                elif target_skew < -0.5:
+                    target_skew_desc = "left-skewed (tail to left)"
+
+                # 解释峰度
+                target_kurt_desc = "mesokurtic (normal-like)"
+                if target_kurt > 1:
+                    target_kurt_desc = "leptokurtic (heavy tails)"
+                elif target_kurt < -1:
+                    target_kurt_desc = "platykurtic (light tails)"
+
+                logger.info(f"  Skewness: {target_skew:.4f} ({target_skew_desc})")
+                logger.info(f"  Kurtosis: {target_kurt:.4f} ({target_kurt_desc})")
+
+                # === Prediction vs Target 对比 ===
+                logger.info("\nPrediction vs Target Comparison:")
+
+                # Mean差异
+                mean_diff = pred_mean - target_mean
+                mean_diff_pct = (mean_diff / target_mean * 100) if target_mean != 0 else 0
+                mean_comp = "pred > target" if mean_diff > 0 else "pred < target" if mean_diff < 0 else "equal"
+                logger.info(f"  Mean Difference: {abs(mean_diff):.6f} ({mean_comp} by {abs(mean_diff_pct):.2f}%)")
+
+                # Std差异
+                std_diff = pred_std - target_std
+                std_diff_pct = (std_diff / target_std * 100) if target_std != 0 else 0
+                std_comp = "pred more variable" if std_diff > 0 else "pred less variable" if std_diff < 0 else "same variability"
+                logger.info(f"  Std Difference: {abs(std_diff):.6f} ({std_comp} by {abs(std_diff_pct):.2f}%)")
+
+                # 分布形状对比
+                skew_similar = abs(pred_skew - target_skew) < 0.5
+                kurt_similar = abs(pred_kurt - target_kurt) < 1.0
+                if skew_similar and kurt_similar:
+                    logger.info(f"  Distribution Shape: Similar (both {skew_desc})")
+                else:
+                    logger.info(f"  Distribution Shape: Different")
+                    if not skew_similar:
+                        logger.info(f"    - Skewness differs: pred={pred_skew:.2f} vs target={target_skew:.2f}")
+                    if not kurt_similar:
+                        logger.info(f"    - Kurtosis differs: pred={pred_kurt:.2f} vs target={target_kurt:.2f}")
+
+            # === 预测值质量检查 ===
+            if pred_std < 1e-8:
                 logger.warning(f"  ⚠️  CONSTANT PREDICTIONS for {task_name}!")
             elif np.unique(task_predictions).shape[0] < 5:
                 logger.warning(f"  ⚠️  LIMITED PREDICTION DIVERSITY for {task_name}")
-        
-        logger.info("="*60)
-    
+
+        logger.info("\n" + "="*65)
+
+    def _create_validation_scatter_plots(self,
+                                         predictions: np.ndarray,
+                                         targets: Dict[str, np.ndarray],
+                                         val_indices: np.ndarray,
+                                         checkpoint_dir: str,
+                                         sample_size: int = 1000) -> None:
+        """创建验证集散点图（Predictions vs Targets）
+
+        Args:
+            predictions: 模型预测值
+            targets: 目标变量字典
+            val_indices: 验证集索引
+            checkpoint_dir: checkpoint目录路径
+            sample_size: 采样数量（默认1000）
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            logger.warning("matplotlib not available - skipping scatter plot generation")
+            return
+
+        logger.info("\n" + "="*65)
+        logger.info("CREATING VALIDATION SCATTER PLOTS")
+        logger.info("="*65)
+
+        # 创建plots子目录
+        plots_dir = Path(checkpoint_dir) / "plots"
+        plots_dir.mkdir(parents=True, exist_ok=True)
+
+        # 确定采样策略
+        n_samples = predictions.shape[0]
+        if n_samples <= sample_size:
+            # 样本数量不超过采样大小，使用全部样本
+            sample_indices = np.arange(n_samples)
+            logger.info(f"Using all {n_samples} validation samples for visualization")
+        else:
+            # 随机采样
+            np.random.seed(42)  # 设置随机种子确保可重复
+            sample_indices = np.random.choice(n_samples, size=sample_size, replace=False)
+            logger.info(f"Randomly sampled {sample_size} out of {n_samples} validation samples")
+
+        # 为每个task创建散点图
+        for i, task_name in enumerate(self.task_names):
+            try:
+                # 获取task的预测值
+                task_predictions = predictions[:, i] if predictions.ndim > 1 else predictions
+                task_predictions_sampled = task_predictions[sample_indices]
+
+                # 获取task的目标值
+                column_name = self.task_column_mapping.get(task_name, task_name)
+                if column_name not in targets:
+                    logger.warning(f"Target column {column_name} not found for task {task_name}, skipping scatter plot")
+                    continue
+
+                task_targets = targets[column_name][val_indices]
+                task_targets_sampled = task_targets[sample_indices]
+
+                # 计算R²分数用于显示
+                try:
+                    r2 = r2_score(task_targets_sampled, task_predictions_sampled)
+                except:
+                    r2 = 0.0
+
+                # 创建图表
+                fig, ax = plt.subplots(figsize=(10, 8))
+
+                # 绘制散点
+                ax.scatter(task_targets_sampled, task_predictions_sampled,
+                          alpha=0.5, s=30, c='#1f77b4', edgecolors='none')
+
+                # 添加y=x参考线（完美预测线）
+                min_val = min(task_targets_sampled.min(), task_predictions_sampled.min())
+                max_val = max(task_targets_sampled.max(), task_predictions_sampled.max())
+                ax.plot([min_val, max_val], [min_val, max_val],
+                       'r--', lw=2, label='Perfect Prediction (y=x)', alpha=0.7)
+
+                # 设置标签和标题
+                ax.set_xlabel('Target Value', fontsize=12, fontweight='bold')
+                ax.set_ylabel('Predicted Value', fontsize=12, fontweight='bold')
+                ax.set_title(f'Task: {task_name} - Validation Set\n(n={len(sample_indices)} samples, R²={r2:.4f})',
+                           fontsize=14, fontweight='bold', pad=15)
+
+                # 添加网格
+                ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+
+                # 添加图例
+                ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
+
+                # 设置坐标轴范围相同（保证对角线是45度）
+                ax.set_aspect('equal', adjustable='box')
+
+                # 优化布局
+                plt.tight_layout()
+
+                # 保存图表
+                plot_filename = f"validation_scatter_{task_name}.png"
+                plot_path = plots_dir / plot_filename
+                plt.savefig(plot_path, dpi=self.plot_dpi, bbox_inches='tight')
+                plt.close(fig)
+
+                logger.info(f"✅ Saved scatter plot: {plot_path} ({len(sample_indices)} samples)")
+
+            except Exception as e:
+                logger.error(f"Failed to create scatter plot for task {task_name}: {e}")
+                import traceback
+                logger.debug(traceback.format_exc())
+                continue
+
+        logger.info("="*65 + "\n")
+
     def _evaluate_single_task(self, 
                              task_name: str, 
                              predictions: np.ndarray, 
