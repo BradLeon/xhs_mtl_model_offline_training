@@ -144,15 +144,22 @@ class BaseMTLFeatureProcessor:
             if any(pattern in feat for pattern in ['cover_image_feat_', 'inner_image_feat_', 'title_feat_', 
                                                    'content_feat_', 'tag_feat_', 'text_feat_', 'image_feat_']):
                 clip_features.append(feat)
-            elif any(pattern in feat for pattern in ['nickname', 'taxonomy1', 'taxonomy2', 'taxonomy3', 
-                                                     'intention_lv1', 'intention_lv2', 'note_marketing_integrated_level',
-                                                     'title_clean', 'content', 'tag_info', 'cover_image_ocr_text', 
+            elif any(pattern in feat for pattern in ['taxonomy1', 'taxonomy2', 'taxonomy3', 
+                                                     'intention_lv1', 'note_marketing_integrated_level',
+                                                     'tag_info', 'cover_image_ocr_text', 
                                                      'inner_images_ocr_text']):
                 sparse_features.append(feat)
             elif feat == 'type':  # 处理type字段避免冲突
                 df['note_type'] = df['type']
                 df = df.drop(columns=['type'])
                 sparse_features.append('note_type')
+            elif feat == 'intention_lv2is_mcn':  # 原parquet文件字段名写入错误，在此处修正
+                df['intention_lv2'] = df['intention_lv2is_mcn']
+                df = df.drop(columns=['intention_lv2is_mcn'])
+                sparse_features.append('intention_lv2')
+            
+            elif feat in ['title_length', 'content_length', 'num_images']:
+                dense_features.append(feat)
         
         logger.info("="*50)
         logger.info("FEATURE CLASSIFICATION ANALYSIS")
