@@ -101,7 +101,12 @@ class BaseTrainingConfig(ABC):
     
     # ============ 设备配置 ============
     device: Optional[str] = None                       # 设备(auto/cpu/cuda/mps)
-    
+
+    # ============ 可视化配置 ============
+    enable_visualization: bool = True                  # 🆕 启用验证集散点图可视化
+    scatter_sample_size: int = 1000                    # 🆕 散点图采样数量
+    plot_dpi: int = 150                                # 🆕 散点图DPI质量
+
     # ============ 日志配置 ============
     verbose: int = 1                                   # 训练日志详细程度
     log_dir: Optional[str] = None                      # 日志输出目录
