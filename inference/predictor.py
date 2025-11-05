@@ -17,8 +17,6 @@ from .model_loader import ModelLoader
 from .feature_processor import InferenceFeatureProcessor
 
 logger = logging.getLogger(__name__)
-
-
 class MTLPredictor:
     """多任务学习预测器
     
@@ -37,24 +35,16 @@ class MTLPredictor:
                 - 'rebuild': 从配置重建模型
         """
         self.checkpoint_dir = Path(checkpoint_dir)
-        
-        logger.info("="*60)
-        logger.info("Initializing MTL Predictor")
-        logger.info(f"Checkpoint: {checkpoint_dir}")
-        logger.info(f"Device: {device}")
-        logger.info(f"Load method: {load_method}")
-        logger.info("="*60)
-        
+        logger.info(f"Initializing MTL Predictor on {device}")
+
         # 1. 初始化模型加载器
         self.model_loader = ModelLoader(checkpoint_dir, device)
         
         # 2. 加载模型
-        logger.info("Loading model...")
         self.model = self.model_loader.load_model(method=load_method)
         self.model.eval()
         
         # 3. 加载预处理器
-        logger.info("Loading preprocessors...")
         self.preprocessors = self.model_loader.load_preprocessors()
         
         # 4. 加载特征列定义
@@ -73,17 +63,13 @@ class MTLPredictor:
         self.training_info = self.model_loader.load_training_info()
         self.tasks = self.training_info.get('tasks', [])
         self.task_column_mapping = self.training_info.get('task_column_mapping', {})
-        
-        logger.info("✅ MTL Predictor initialized successfully")
-        logger.info(f"Model type: {self.training_info.get('model_type', 'unknown')}")
-        logger.info(f"Tasks: {', '.join(self.tasks)}")
-        
+        logger.info(f"MTL Predictor initialized: {self.training_info.get('model_type', 'unknown')} with {len(self.tasks)} tasks")
+
         # 预热模型
         self._warmup()
     
     def _warmup(self):
         """预热模型，减少首次推理延迟"""
-        logger.info("Warming up model...")
         
         # 创建虚拟输入
         dummy_input = {}
@@ -94,7 +80,6 @@ class MTLPredictor:
         with torch.no_grad():
             _ = self.model.predict(dummy_input, batch_size=1)
         
-        logger.info("✅ Model warmed up")
     
     def predict_single(self, note_data: Dict[str, Any]) -> Dict[str, float]:
         """预测单条笔记
@@ -121,7 +106,6 @@ class MTLPredictor:
         inference_time = time.time() - start_time
         results['inference_time_ms'] = inference_time * 1000
         
-        logger.info(f"Single prediction completed in {inference_time*1000:.2f}ms")
         return results
 
     def predict_single_with_diagnosis(self, note_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -155,9 +139,6 @@ class MTLPredictor:
         # 记录推理时间
         inference_time = time.time() - start_time
         final_results['inference_time_ms'] = inference_time * 1000
-
-        logger.info(f"Prediction with diagnosis completed in {inference_time*1000:.2f}ms")
-
         # 返回完整诊断信息
         return {
             'raw_predictions': raw_predictions,  # 原始预测（归一化空间）
@@ -184,7 +165,6 @@ class MTLPredictor:
         else:
             df = notes_data.copy()
         
-        logger.info(f"Batch prediction for {len(df)} samples")
         
         # 处理特征
         model_input = self.feature_processor.process_batch(df)
@@ -198,7 +178,6 @@ class MTLPredictor:
         
         # 如果有标签归一化，需要反归一化
         if self.label_normalizer is not None:
-            logger.info("Denormalizing predictions...")
             predictions = self.label_normalizer.inverse_transform(predictions, self.tasks)
 
         # 添加预测结果
@@ -210,7 +189,6 @@ class MTLPredictor:
                 if task == 'impression':
                     # Apply exp() transformation to convert from log-space
                     task_predictions = np.exp(task_predictions)
-                    logger.info(f"Applied exp() transformation to impression_log -> impression count")
 
                 results_df[f'{task}_pred'] = task_predictions
             else:
@@ -222,8 +200,6 @@ class MTLPredictor:
         
         # 记录推理时间
         inference_time = time.time() - start_time
-        logger.info(f"Batch prediction completed in {inference_time:.2f}s")
-        logger.info(f"Average time per sample: {inference_time/len(df)*1000:.2f}ms")
         
         return results_df
     
@@ -239,20 +215,15 @@ class MTLPredictor:
         results = {}
 
         # 💾 保存原始预测（归一化空间）用于诊断
-        logger.info(f"📊 Raw predictions from model (normalized space): {predictions}")
-        logger.info(f"   Shape: {predictions.shape}, Dtype: {predictions.dtype}")
 
         # 如果有标签归一化，需要反归一化
         denormalized_predictions = predictions
         if self.label_normalizer is not None:
-            logger.info(f"🔄 Applying label denormalization...")
             denormalized_predictions = self.label_normalizer.inverse_transform(predictions, self.tasks)
-            logger.info(f"✅ Denormalized predictions (original space): {denormalized_predictions}")
 
             # 显示每个任务的反归一化前后对比
             for i, task in enumerate(self.tasks):
                 if i < len(predictions[0]):
-                    logger.info(f"   {task}: {predictions[0][i]:.4f} → {denormalized_predictions[0][i]:.4f}")
         else:
             logger.warning("⚠️  No label_normalizer available - predictions remain in normalized space!")
 
@@ -276,16 +247,8 @@ class MTLPredictor:
                 # Need to apply exp() to get actual impression count
                 impression_log = value
                 value = np.exp(impression_log) if impression_log > 0 else 1000.0
-                logger.info(f"🔄 Impression: {impression_log:.4f} (log) → {value:.0f} (actual count)")
 
             results[task] = value
-
-        logger.info(f"\n📋 Final predictions:")
-        for task, value in results.items():
-            if task == 'impression':
-                logger.info(f"   {task}: {value:.0f}")
-            else:
-                logger.info(f"   {task}: {value:.4f}")
 
         return results
     
@@ -404,9 +367,6 @@ class MTLPredictor:
         Returns:
             normalizer诊断信息字典
         """
-        logger.info("="*80)
-        logger.info("LABEL NORMALIZER DIAGNOSIS")
-        logger.info("="*80)
 
         if self.label_normalizer is None:
             logger.warning("⚠️  No label normalizer found!")
@@ -431,26 +391,17 @@ class MTLPredictor:
                 if hasattr(scaler, 'mean_') and hasattr(scaler, 'scale_'):
                     task_stats['mean'] = float(scaler.mean_[0]) if scaler.mean_.ndim > 0 else float(scaler.mean_)
                     task_stats['std'] = float(scaler.scale_[0]) if scaler.scale_.ndim > 0 else float(scaler.scale_)
-                    logger.info(f"\n📊 {task}:")
-                    logger.info(f"  Scaler: {task_stats['scaler_type']}")
-                    logger.info(f"  Mean: {task_stats['mean']:.6f}")
-                    logger.info(f"  Std: {task_stats['std']:.6f}")
 
                 # MinMaxScaler
                 elif hasattr(scaler, 'data_min_') and hasattr(scaler, 'data_max_'):
                     task_stats['min'] = float(scaler.data_min_[0]) if scaler.data_min_.ndim > 0 else float(scaler.data_min_)
                     task_stats['max'] = float(scaler.data_max_[0]) if scaler.data_max_.ndim > 0 else float(scaler.data_max_)
-                    logger.info(f"\n📊 {task}:")
-                    logger.info(f"  Scaler: {task_stats['scaler_type']}")
-                    logger.info(f"  Min: {task_stats['min']:.6f}")
-                    logger.info(f"  Max: {task_stats['max']:.6f}")
 
                 diagnosis['task_statistics'][task] = task_stats
             else:
                 logger.warning(f"⚠️  Task '{task}' not found in normalizer!")
                 diagnosis['task_statistics'][task] = {'status': 'missing'}
 
-        logger.info("="*80)
         return diagnosis
 
     def verify_task_order(self) -> Dict[str, Any]:
@@ -459,9 +410,6 @@ class MTLPredictor:
         Returns:
             顺序验证结果字典
         """
-        logger.info("="*80)
-        logger.info("TASK ORDER VERIFICATION")
-        logger.info("="*80)
 
         verification = {
             'loaded_tasks': self.tasks,
@@ -470,10 +418,8 @@ class MTLPredictor:
             'consistency_check': {}
         }
 
-        logger.info(f"\n📋 Loaded tasks order ({len(self.tasks)}):")
         for i, task in enumerate(self.tasks):
             column_name = self.task_column_mapping.get(task, task)
-            logger.info(f"  [{i}] {task} → {column_name}")
 
         # 检查normalizer中的任务
         if self.label_normalizer:
@@ -495,9 +441,7 @@ class MTLPredictor:
                 logger.warning(f"⚠️  Extra tasks in normalizer: {extra_in_normalizer}")
 
             if len(missing_in_normalizer) == 0 and len(extra_in_normalizer) == 0:
-                logger.info("✅ All tasks are consistent between loaded tasks and normalizer")
 
-        logger.info("="*80)
         return verification
 
     def diagnose_predictions(self, predictions: np.ndarray,
@@ -513,9 +457,6 @@ class MTLPredictor:
         Returns:
             诊断信息字典
         """
-        logger.info("="*80)
-        logger.info("PREDICTION DIAGNOSIS")
-        logger.info("="*80)
 
         diagnosis = {
             'predictions_shape': predictions.shape,
@@ -526,17 +467,10 @@ class MTLPredictor:
 
         # 显示输入数据上下文
         if note_data and show_details:
-            logger.info(f"\n📝 Input note data:")
-            logger.info(f"  note_id: {note_data.get('note_id', 'N/A')}")
-            logger.info(f"  title: {note_data.get('title', 'N/A')[:50]}...")
 
         # 原始预测值
-        logger.info(f"\n🔢 Raw predictions (from model):")
-        logger.info(f"  Shape: {predictions.shape}")
         if predictions.ndim > 1:
-            logger.info(f"  Values: {predictions[0, :]}")
         else:
-            logger.info(f"  Values: {predictions}")
 
         # 保存原始预测用于对比
         raw_predictions = predictions.copy()
@@ -544,17 +478,11 @@ class MTLPredictor:
         # 反归一化（如果有normalizer）
         denormalized_predictions = predictions
         if self.label_normalizer is not None:
-            logger.info(f"\n🔄 Applying denormalization...")
             denormalized_predictions = self.label_normalizer.inverse_transform(predictions, self.tasks)
-            logger.info(f"  Denormalized shape: {denormalized_predictions.shape}")
             if denormalized_predictions.ndim > 1:
-                logger.info(f"  Denormalized values: {denormalized_predictions[0, :]}")
             else:
-                logger.info(f"  Denormalized values: {denormalized_predictions}")
 
         # 分析每个任务的预测
-        logger.info(f"\n📊 Per-task prediction analysis:")
-        logger.info("-" * 80)
 
         for i, task in enumerate(self.tasks):
             if predictions.ndim > 1:
@@ -587,17 +515,11 @@ class MTLPredictor:
             diagnosis['task_predictions'][task] = task_info
 
             # 日志输出
-            logger.info(f"\n[{i}] {task}:")
-            logger.info(f"  Raw (normalized):  {raw_val:>12.6f}")
-            logger.info(f"  Denormalized:      {denorm_val:>12.6f}")
 
             if task_info['clipped_applied']:
-                logger.info(f"  After clip:        {clipped_val:>12.6f} ⚠️ (clipped!)")
             else:
-                logger.info(f"  After clip:        {clipped_val:>12.6f}")
 
             if imp_num_val is not None:
-                logger.info(f"  Exp(denorm):       {imp_num_val:>12.0f} (imp_num estimate)")
 
             # 警告异常值
             if denorm_val < 0:
@@ -606,5 +528,4 @@ class MTLPredictor:
                 if denorm_val > 1.0:
                     logger.warning(f"  ⚠️  Value > 1.0 for rate/ctr task!")
 
-        logger.info("="*80)
         return diagnosis
