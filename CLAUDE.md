@@ -1,6 +1,50 @@
+<!-- OPENSPEC:START -->
+# OpenSpec Instructions
+
+These instructions are for AI assistants working in this project.
+
+Always open `@/openspec/AGENTS.md` when the request:
+- Mentions planning or proposals (words like proposal, spec, change, plan)
+- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work
+- Sounds ambiguous and you need the authoritative spec before coding
+
+Use `@/openspec/AGENTS.md` to learn:
+- How to create and apply change proposals
+- Spec format and conventions
+- Project structure and guidelines
+
+Keep this managed block so 'openspec update' can refresh the instructions.
+
+<!-- OPENSPEC:END -->
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Recent Critical Fixes (2025-11-05)
+
+### Fixed Online-Offline Prediction Inconsistency
+
+**Problem**: Online inference service (`xhs_mtl_model_online_reasoning`) was producing incorrect predictions with values of 0.0 for ctr, sort_score, and comment_rate due to model architecture mismatch.
+
+**Root Cause**:
+- Online service used `task_types=['regression']` while the model was trained with `task_types=['binary']`
+- This caused output layer activation function mismatch (linear vs sigmoid)
+- Raw predictions were out of range (e.g., -1.763, 20.473) and got clipped to 0.0
+
+**Solution Applied** (`app/services/model_inference.py`):
+1. Changed `task_types=['regression']` → `task_types=['binary']` (Line 361)
+2. Added missing `dnn_dropout` parameter (Line 369)
+3. Reordered parameters to match offline training code
+4. Fixed import path: `from offline_training.training.base.pnn_mmoe_model import PNN_MMOE`
+
+**Files Modified**:
+- `/Users/liuchao/AI/xhs-ctr-project/xhs_mtl_model_online_reasoning/app/services/model_inference.py`
+
+**Verification**:
+- Online predictions now match offline predictions
+- All rate values naturally fall within [0, 1] range without clipping
+- ctr, sort_score, comment_rate now show correct non-zero values
 
 ## Project Overview
 
