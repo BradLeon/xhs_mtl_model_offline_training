@@ -384,7 +384,11 @@ class MultimodalPipeline(AsyncPipelineBase):
         
         # 初始化组件
         checkpoint_mgr = CheckpointManager()
-        data_reader = DataReader(self.config.input_path, self.config.batch_size)
+        data_reader = DataReader(
+            self.config.input_path,
+            self.config.batch_size,
+            min_impression_threshold=self.config.min_impression_threshold
+        )
         data_writer = DataWriter(self.config.output_path)
         
         self.logger.info("Pipeline will use per-process CLIP model caching for better memory management")

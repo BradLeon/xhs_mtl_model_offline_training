@@ -396,6 +396,18 @@ class IncrementalMultimodalPipeline:
                 df = pd.read_parquet(parquet_file)
                 self.logger.info(f"读取 {len(df)} 行, {len(df.columns)} 列")
 
+                # 文件级过滤：过滤低曝光数据（在 CLIP 计算前过滤，节省计算资源）
+                if self.config.min_impression_threshold > 0 and 'imp_num' in df.columns:
+                    before_count = len(df)
+                    df = df[df['imp_num'] >= self.config.min_impression_threshold].reset_index(drop=True)
+                    after_count = len(df)
+                    filtered_count = before_count - after_count
+                    self.logger.info(f"曝光过滤 (>={self.config.min_impression_threshold}): {before_count:,} -> {after_count:,} 行 (过滤 {filtered_count:,} 行)")
+
+                    if len(df) == 0:
+                        self.logger.warning(f"文件 {parquet_file.name} 过滤后无数据，跳过")
+                        continue
+
                 # 重命名已有特征
                 if self.config.rename_features:
                     df = rename_existing_features(df, self.config.get_rename_map())
