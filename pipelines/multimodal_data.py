@@ -122,10 +122,11 @@ class CheckpointManager:
 
 class DataReader:
     """数据读取器"""
-    
-    def __init__(self, input_path: str, batch_size: int = 3000):
+
+    def __init__(self, input_path: str, batch_size: int = 3000, min_impression_threshold: int = 0):
         self.input_path = Path(input_path)
         self.batch_size = batch_size
+        self.min_impression_threshold = min_impression_threshold
         self.parquet_files = self._get_parquet_files()
         self.total_files = len(self.parquet_files)
         self.file_mapping = None
@@ -191,7 +192,19 @@ class DataReader:
             except Exception as e:
                 logger.error(f"Failed to read file {file_path}: {e}")
                 continue
-            
+
+            # 文件级过滤：过滤低曝光数据（在 CLIP 计算前过滤，节省计算资源）
+            if self.min_impression_threshold > 0 and 'imp_num' in df.columns:
+                before_count = len(df)
+                df = df[df['imp_num'] >= self.min_impression_threshold].reset_index(drop=True)
+                after_count = len(df)
+                filtered_count = before_count - after_count
+                logger.info(f"   曝光过滤 (>={self.min_impression_threshold}): {before_count:,} -> {after_count:,} 行 (过滤 {filtered_count:,} 行)")
+
+                if len(df) == 0:
+                    logger.warning(f"   文件 {file_path.name} 过滤后无数据，跳过")
+                    continue
+
             # 生成批次
             batch_idx_in_file = 0
             for start_idx in range(0, len(df), self.batch_size):

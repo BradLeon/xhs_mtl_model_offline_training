@@ -159,6 +159,8 @@ def run_incremental_multimodal_stage(args) -> Dict[str, Any]:
         kwargs['checkpoint_interval'] = args.checkpoint_interval
     if hasattr(args, 'max_workers') and args.max_workers:
         kwargs['max_workers'] = args.max_workers
+    if hasattr(args, 'min_impression_threshold') and args.min_impression_threshold is not None:
+        kwargs['min_impression_threshold'] = args.min_impression_threshold
 
     # 特征启用配置（与 run_multimodal_stage 保持一致的逻辑）
     # --enable-all-features 会启用所有特征
