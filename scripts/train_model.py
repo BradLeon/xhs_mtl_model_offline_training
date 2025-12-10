@@ -19,8 +19,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from training.single_task.ctr_trainer import LocalCTRTrainer
 from training.multi_task.ple_trainer import PLETrainer
 from training.multi_task.mmoe_trainer import MMOETrainer
-from training.multi_task.pnn_mmoe_trainer import PNN_MMOETrainer
-
+from training.multi_task.pnn_mmoe_trainer import PNNMMOETrainer
+from training.base.base_config import create_config_from_args
 
 def setup_logging(log_level: str = "INFO", log_file: str = None):
     """设置日志"""
@@ -48,7 +48,8 @@ def train_single_task(args) -> Dict[str, Any]:
     """训练单任务模型"""
     logger = logging.getLogger(__name__)
     logger.info("🚀 Starting single-task CTR model training")
-    
+
+    # LocalCTRTrainer使用旧的**kwargs接口，需要直接传递参数
     # 处理自定义特征配置
     custom_config_args = {}
     if args.feature_config == "custom":
@@ -58,7 +59,7 @@ def train_single_task(args) -> Dict[str, Any]:
             'use_clip_image': args.use_clip_image,
             'use_clip_text': args.use_clip_text
         }
-    
+
     # 创建训练器
     trainer = LocalCTRTrainer(
         input_path=args.input,
@@ -81,10 +82,14 @@ def train_single_task(args) -> Dict[str, Any]:
         early_stopping_min_delta=getattr(args, 'early_stopping_min_delta', 0.0001),
         restore_best_weights=getattr(args, 'restore_best_weights', True),
         save_best_model=getattr(args, 'save_best_model', False),
+        # 可视化参数
+        enable_visualization=getattr(args, 'enable_visualization', True),
+        scatter_sample_size=getattr(args, 'scatter_sample_size', 1000),
+        plot_dpi=getattr(args, 'plot_dpi', 150),
         # 自定义配置参数
         **custom_config_args
     )
-    
+
     if args.all_models:
         # 训练所有模型并对比
         results = trainer.run_all_models(
@@ -101,7 +106,7 @@ def train_single_task(args) -> Dict[str, Any]:
             test_size=getattr(args, 'test_size', 0.2),
             val_size=getattr(args, 'val_size', 0.1)
         )
-    
+
     return results
 
 
@@ -109,57 +114,28 @@ def train_multi_task(args) -> Dict[str, Any]:
     """训练多任务模型"""
     logger = logging.getLogger(__name__)
     logger.info(f"🚀 Starting multi-task {args.multi_task_model} model training")
-    
-    # 解析任务列表
-    tasks = None
-    if args.tasks:
-        tasks = [task.strip() for task in args.tasks.split(',')]
-    
+
+    # 添加参数映射，以便create_config_from_args正确解析
+    args.input_path = args.input
+    args.output_path = args.output
+    args.model_type = args.multi_task_model
+
+    # 使用create_config_from_args创建配置对象
+    config = create_config_from_args(args, config_type="multi")
+
     # 根据模型类型创建相应的训练器
     if args.multi_task_model == 'PLE':
-        trainer = PLETrainer(
-            input_path=args.input,
-            output_path=args.output,
-            tasks=tasks,
-            epochs=args.epochs,
-            use_pca=args.use_pca,
-            pca_components=args.pca_components,
-            min_impression=args.min_impression,
-            min_click=args.min_click,
-            shared_expert_num=args.shared_expert_num,
-            specific_expert_num=args.specific_expert_num,
-            num_levels=args.num_levels
-        )
+        trainer = PLETrainer(config)
     elif args.multi_task_model == 'MMOE':
-        trainer = MMOETrainer(
-            input_path=args.input,
-            output_path=args.output,
-            tasks=tasks,
-            epochs=args.epochs,
-            use_pca=args.use_pca,
-            pca_components=args.pca_components,
-            min_impression=args.min_impression,
-            min_click=args.min_click,
-            num_experts=args.num_experts
-        )
+        trainer = MMOETrainer(config)
     elif args.multi_task_model == 'PNN_MMOE':
-        trainer = PNN_MMOETrainer(
-            input_path=args.input,
-            output_path=args.output,
-            tasks=tasks,
-            epochs=args.epochs,
-            use_pca=args.use_pca,
-            pca_components=args.pca_components,
-            min_impression=args.min_impression,
-            min_click=args.min_click,
-            num_experts=args.num_experts
-        )
+        trainer = PNNMMOETrainer(config)
     else:
         raise ValueError(f"Unknown multi-task model: {args.multi_task_model}")
-    
+
     # 运行训练
     results = trainer.run()
-    
+
     return results
 
 
@@ -281,8 +257,8 @@ def main():
                              help='单任务模型类型')
     single_group.add_argument('--all-models', action='store_true',
                              help='训练所有单任务模型并比较')
-    single_group.add_argument('--feature-config', default='default',
-                             choices=['basic', 'clip_only', 'no_image', 'no_text', 'all', 'default', 'custom'],
+    single_group.add_argument('--feature-config', default='all',
+                             choices=['basic', 'clip_only', 'no_image', 'no_text', 'all', 'custom'],
                              help='特征配置')
     single_group.add_argument('--no-early-stopping', action='store_true',
                              help='禁用早停机制')
@@ -348,15 +324,27 @@ def main():
     
     # 额外训练参数
     advanced_group = parser.add_argument_group('高级训练参数')
-    advanced_group.add_argument('--label-normalization', 
-                               choices=['none', 'standard', 'minmax', 'robust'], 
+    advanced_group.add_argument('--label-normalization',
+                               choices=['none', 'standard', 'minmax', 'robust'],
                                default='none',
                                help='标签归一化方法')
-    advanced_group.add_argument('--device', 
-                               choices=['auto', 'cpu', 'cuda', 'mps'], 
+    advanced_group.add_argument('--device',
+                               choices=['auto', 'cpu', 'cuda', 'mps'],
                                default='auto',
                                help='训练设备选择')
-    
+
+    # 可视化参数
+    visualization_group = parser.add_argument_group('可视化参数 (验证集散点图)')
+    visualization_group.add_argument('--enable-visualization', action='store_true', default=True,
+                                    help='启用验证集散点图可视化（默认启用）')
+    visualization_group.add_argument('--no-visualization', dest='enable_visualization',
+                                    action='store_false',
+                                    help='禁用验证集散点图可视化')
+    visualization_group.add_argument('--scatter-sample-size', type=int, default=1000,
+                                    help='散点图采样数量（默认1000）')
+    visualization_group.add_argument('--plot-dpi', type=int, default=150,
+                                    help='散点图DPI质量（默认150）')
+
     args = parser.parse_args()
     
     # 验证参数

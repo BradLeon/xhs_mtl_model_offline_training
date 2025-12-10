@@ -141,13 +141,14 @@ class BaseMTLFeatureProcessor:
         clip_features = []
         
         for feat in feature_candidates:
-            if any(pattern in feat for pattern in ['cover_image_feat_', 'inner_image_feat_', 'title_feat_', 
-                                                   'content_feat_', 'tag_feat_', 'text_feat_', 'image_feat_']):
+            # CLIP 特征：包含图像、文本、OCR 的 CLIP embedding
+            if any(pattern in feat for pattern in ['cover_image_feat_', 'inner_image_feat_', 'title_feat_',
+                                                   'content_feat_', 'tag_feat_', 'text_feat_', 'image_feat_',
+                                                   'cover_ocr_feat_', 'inner_ocr_feat_']):  # 新增 OCR CLIP 特征
                 clip_features.append(feat)
-            elif any(pattern in feat for pattern in ['taxonomy1', 'taxonomy2', 'taxonomy3', 
-                                                     'intention_lv1', 'note_marketing_integrated_level',
-                                                     'tag_info', 'cover_image_ocr_text', 
-                                                     'inner_images_ocr_text']):
+            # Sparse 特征：分类标签（移除了 tag_info, cover_image_ocr_text, inner_images_ocr_text）
+            elif any(pattern in feat for pattern in ['taxonomy1', 'taxonomy2', 'taxonomy3',
+                                                     'intention_lv1', 'note_marketing_integrated_level']):
                 sparse_features.append(feat)
             elif feat == 'type':  # 处理type字段避免冲突
                 df['note_type'] = df['type']

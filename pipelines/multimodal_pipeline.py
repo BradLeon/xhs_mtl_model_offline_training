@@ -250,11 +250,40 @@ async def process_batch_async(batch_df: pd.DataFrame, config: MultimodalConfig,
         inner_ocr_texts = [''] * len(valid_indices)
         inner_ocr_confidences = [0.0] * len(valid_indices)
     
-    # 将OCR结果分别添加到特征字典
+    # 将OCR结果分别添加到特征字典（原始文本，用于调试）
     features['cover_image_ocr_texts'] = cover_ocr_texts
     features['cover_image_ocr_confidences'] = cover_ocr_confidences
     features['inner_images_ocr_texts'] = inner_ocr_texts
     features['inner_images_ocr_confidences'] = inner_ocr_confidences
+
+    # OCR 文本 → CLIP 特征提取（替代 LabelEncoder sparse 特征）
+    if config.enable_cover_ocr_clip and cover_ocr_texts:
+        all_cover_ocr_features = []
+        for i in range(0, len(cover_ocr_texts), gpu_batch_size):
+            batch_texts = cover_ocr_texts[i:i+gpu_batch_size]
+            # 处理空文本：使用空字符串，CLIP 会生成零向量
+            batch_texts = [t if t and t.strip() else '' for t in batch_texts]
+            batch_features = clip_processor.process_texts(batch_texts)
+            all_cover_ocr_features.append(batch_features)
+
+        if all_cover_ocr_features:
+            cover_ocr_features = np.vstack(all_cover_ocr_features)
+            features['cover_ocr_features'] = cover_ocr_features
+            del all_cover_ocr_features
+
+    if config.enable_inner_ocr_clip and inner_ocr_texts:
+        all_inner_ocr_features = []
+        for i in range(0, len(inner_ocr_texts), gpu_batch_size):
+            batch_texts = inner_ocr_texts[i:i+gpu_batch_size]
+            # 处理空文本：使用空字符串，CLIP 会生成零向量
+            batch_texts = [t if t and t.strip() else '' for t in batch_texts]
+            batch_features = clip_processor.process_texts(batch_texts)
+            all_inner_ocr_features.append(batch_features)
+
+        if all_inner_ocr_features:
+            inner_ocr_features = np.vstack(all_inner_ocr_features)
+            features['inner_ocr_features'] = inner_ocr_features
+            del all_inner_ocr_features
     
     # 构建完整特征矩阵（填充到原始batch大小）
     full_features = {}
