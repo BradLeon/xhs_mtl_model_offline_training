@@ -102,16 +102,16 @@ class BaseMTLTrainer(ABC):
     def _get_default_task_weights(self) -> Dict[str, float]:
         """获取默认任务权重"""
         return {
-            'ctr': 1.0,
-            'like_rate': 2.0,
-            'fav_rate': 3.0,
-            'comment_rate': 5.0,
-            'share_rate': 4.0,
-            'follow_rate': 4.0,
+            'ctr': 3.0,
+            'like_rate': 1.0,
+            'fav_rate': 1.0,
+            'comment_rate': 1.0,
+            'share_rate': 1.0,
+            'follow_rate': 1.0,
             'interaction_rate': 2.0,
-            'ces_rate': 1.5,
+            'ces_rate': 2.0,
             'impression': 1.0,
-            'sort_score': 2.0
+            'sort_score': 3.0
         }
     
     @abstractmethod
@@ -383,19 +383,21 @@ class BaseMTLTrainer(ABC):
             
             logger.info("="*50)
     
-    def run(self, 
-           epochs: int = None, 
-           batch_size: int = None, 
+    def run(self,
+           epochs: int = None,
+           batch_size: int = None,
            learning_rate: float = None,
-           validation_split: float = None) -> Dict[str, Any]:
+           validation_split: float = None,
+           save_model: bool = True) -> Dict[str, Any]:
         """运行完整的MTL训练流程（8步统一流程）
-        
+
         Args:
             epochs: 训练轮数（可选，使用配置默认值）
             batch_size: 批次大小（可选，使用配置默认值）
             learning_rate: 学习率（可选，使用配置默认值）
             validation_split: 验证集比例（可选，使用配置默认值）
-            
+            save_model: 是否保存模型（默认True，用于超参数优化时跳过非最优模型保存）
+
         Returns:
             完整结果字典
         """
@@ -439,23 +441,32 @@ class BaseMTLTrainer(ABC):
         
         # 7. 训练模型
         logger.info("Step 7/8: Training model...")
-        training_info = self.train_model(model_input, targets, epochs, batch_size, 
+        training_info = self.train_model(model_input, targets, epochs, batch_size,
                                        learning_rate, validation_split)
-        
-        # 8. 保存结果
-        logger.info("Step 8/8: Saving results...")
-        results = self.evaluator.save_results(
-            model_type=self.config.model_type,
-            training_info=training_info,
-            feature_info=feature_info,
-            model_config=self.get_model_config(),
-            training_config=self.config.get_training_config_dict(),
-            input_path=self.config.input_path,
-            model=self.model,
-            preprocessors=self.feature_processor.get_preprocessors(),
-            feature_columns=feature_columns  # 传递特征列定义
-        )
-        
+
+        # 8. 保存结果（可选）
+        if save_model:
+            logger.info("Step 8/8: Saving results...")
+            results = self.evaluator.save_results(
+                model_type=self.config.model_type,
+                training_info=training_info,
+                feature_info=feature_info,
+                model_config=self.get_model_config(),
+                training_config=self.config.get_training_config_dict(),
+                input_path=self.config.input_path,
+                model=self.model,
+                preprocessors=self.feature_processor.get_preprocessors(),
+                feature_columns=feature_columns  # 传递特征列定义
+            )
+        else:
+            logger.info("Step 8/8: Skipping model save (save_model=False)")
+            # 返回训练信息但不保存模型
+            results = {
+                'training_info': training_info,
+                'feature_info': feature_info,
+                'model_path': None
+            }
+
         # 总时间
         total_time = time.time() - start_time
         logger.info("="*80)
@@ -464,8 +475,16 @@ class BaseMTLTrainer(ABC):
         logger.info(f"Tasks trained: {len(self.config.tasks)}")
         logger.info(f"Feature columns: {len(feature_columns)}")
         logger.info("="*80)
-        
+
         # 打印结果摘要
         self.evaluator.print_summary(training_info['evaluation_results'])
-        
+
+        # 保存临时的训练器状态用于后续可能的模型保存
+        self._last_training_state = {
+            'feature_columns': feature_columns,
+            'feature_info': feature_info,
+            'model_input': model_input,
+            'targets': targets
+        }
+
         return results

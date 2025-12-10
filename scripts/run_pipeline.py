@@ -17,6 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipelines.text_pipeline import run_text_pipeline, run_text_pipeline_from_args
 from pipelines.multimodal_pipeline import run_multimodal_pipeline
+from pipelines.incremental_multimodal_pipeline import run_incremental_multimodal_pipeline
 
 
 def setup_logging(log_level: str = "INFO", log_file: str = None):
@@ -125,6 +126,65 @@ def run_multimodal_stage(args) -> Dict[str, Any]:
     )
 
 
+def run_incremental_multimodal_stage(args) -> Dict[str, Any]:
+    """运行增量多模态特征提取阶段
+
+    从已有的 image_features_parquet 提取缺失特征，避免重复 CLIP 计算
+    与 run_multimodal_stage 保持一致的参数处理方式
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("🚀 Starting incremental multimodal feature extraction stage")
+
+    # 确定输入路径（必须是已有 image_feat_* 和 text_feat_* 的 parquet）
+    if not args.input:
+        raise ValueError("--input is required for incremental-multimodal stage")
+
+    input_path = args.input
+
+    # 构建参数字典（与 run_multimodal_stage 保持一致）
+    kwargs = {}
+
+    # 基本参数
+    if hasattr(args, 'batch_size') and args.batch_size:
+        kwargs['batch_size'] = args.batch_size
+    if hasattr(args, 'resume') and args.resume:
+        kwargs['resume'] = args.resume
+    if hasattr(args, 'model_name') and args.model_name:
+        kwargs['model_name'] = args.model_name
+    if hasattr(args, 'gpu_batch_size') and args.gpu_batch_size:
+        kwargs['gpu_batch_size'] = args.gpu_batch_size
+    if hasattr(args, 'num_downloaders') and args.num_downloaders:
+        kwargs['num_downloaders'] = args.num_downloaders
+    if hasattr(args, 'checkpoint_interval') and args.checkpoint_interval:
+        kwargs['checkpoint_interval'] = args.checkpoint_interval
+    if hasattr(args, 'max_workers') and args.max_workers:
+        kwargs['max_workers'] = args.max_workers
+
+    # 特征启用配置（与 run_multimodal_stage 保持一致的逻辑）
+    # --enable-all-features 会启用所有特征
+    if hasattr(args, 'enable_all_features') and args.enable_all_features:
+        kwargs['enable_inner_images'] = True
+        kwargs['enable_content_text'] = True
+        kwargs['enable_tag_text'] = True
+        kwargs['enable_cover_ocr_clip'] = True
+        kwargs['enable_inner_ocr_clip'] = True
+    # 否则让 IncrementalMultimodalConfig 使用其默认值 (全部为 True)
+
+    # 特征处理参数
+    if hasattr(args, 'pooling_strategy') and args.pooling_strategy:
+        kwargs['pooling_strategy'] = args.pooling_strategy
+    if hasattr(args, 'max_inner_images') and args.max_inner_images is not None:
+        kwargs['max_inner_images'] = args.max_inner_images
+    if hasattr(args, 'max_content_length') and args.max_content_length:
+        kwargs['max_content_length'] = args.max_content_length
+
+    return run_incremental_multimodal_pipeline(
+        input_path=input_path,
+        output_path=args.output,
+        **kwargs
+    )
+
+
 def run_full_pipeline(args) -> Dict[str, Any]:
     """运行完整管道"""
     logger = logging.getLogger(__name__)
@@ -163,10 +223,10 @@ def run_full_pipeline(args) -> Dict[str, Any]:
 
 def main():
     parser = argparse.ArgumentParser(description='小红书CTR预估模型 - 统一特征提取管道')
-    
+
     # 基本参数
-    parser.add_argument('--stage', choices=['text', 'multimodal', 'all'], default='all',
-                       help='运行阶段: text=文本特征, multimodal=多模态特征, all=完整管道')
+    parser.add_argument('--stage', choices=['text', 'multimodal', 'incremental-multimodal', 'all'], default='all',
+                       help='运行阶段: text=文本特征, multimodal=多模态特征, incremental-multimodal=增量多模态特征, all=完整管道')
     parser.add_argument('--input', help='输入数据路径 (multimodal阶段使用)')
     parser.add_argument('--output', help='输出路径')
     parser.add_argument('--log-level', default='INFO', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
@@ -260,6 +320,8 @@ def main():
             results = run_text_stage(args)
         elif args.stage == 'multimodal':
             results = run_multimodal_stage(args)
+        elif args.stage == 'incremental-multimodal':
+            results = run_incremental_multimodal_stage(args)
         elif args.stage == 'all':
             results = run_full_pipeline(args)
         else:

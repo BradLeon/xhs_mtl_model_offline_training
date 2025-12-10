@@ -347,10 +347,29 @@ class DataWriter:
             else:
                 ocr_text_col = 'inner_images_ocr_text'
                 ocr_conf_col = 'inner_images_ocr_confidence'
-            
+
             result_df[ocr_text_col] = features['inner_images_ocr_texts']
             result_df[ocr_conf_col] = features['inner_images_ocr_confidences']
-            
+
+        # OCR CLIP 特征（替代 LabelEncoder sparse 特征）
+        if 'cover_ocr_features' in features:
+            column_names = [f'cover_ocr_feat_{i}' for i in range(num_features)]
+            cover_ocr_feat_df = pd.DataFrame(
+                features['cover_ocr_features'],
+                columns=column_names,
+                index=df.index
+            )
+            result_df = pd.concat([result_df, cover_ocr_feat_df], axis=1)
+
+        if 'inner_ocr_features' in features:
+            column_names = [f'inner_ocr_feat_{i}' for i in range(num_features)]
+            inner_ocr_feat_df = pd.DataFrame(
+                features['inner_ocr_features'],
+                columns=column_names,
+                index=df.index
+            )
+            result_df = pd.concat([result_df, inner_ocr_feat_df], axis=1)
+
         # 生成输出文件名
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         output_file = self.output_path / f"multimodal_batch_{batch_id:06d}_{timestamp}.parquet"
@@ -446,7 +465,7 @@ def extract_tag_names(tag_info_str: str) -> str:
                 if isinstance(tag, dict) and 'name' in tag:
                     tag_names.append(tag['name'])
                     
-            return ' '.join(tag_names)
+            return ','.join(tag_names)
             
     except Exception as e:
         logger.debug(f"Failed to parse tag_info: {e}")
